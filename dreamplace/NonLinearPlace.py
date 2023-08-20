@@ -578,7 +578,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                                 if params.adjust_nctugr_area_flag:
                                     route_utilization_map = model.op_collections.nctugr_congestion_map_op(pos)
                                 else:
-                                    route_utilization_map = model.op_collections.route_utilization_map_op(pos)
+                                    route_utilization_map,_,_ = model.op_collections.route_utilization_map_op(pos)
                                 if params.plot_flag:
                                     path = "%s/%s" % (params.result_dir, params.design_name())
                                     figname = "%s/plot/route%d.png" % (path, num_area_adjust)

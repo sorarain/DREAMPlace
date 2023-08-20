@@ -32,6 +32,8 @@ import dreamplace.ops.pin_utilization.pin_utilization as pin_utilization
 import dreamplace.ops.nctugr_binary.nctugr_binary as nctugr_binary
 import dreamplace.ops.adjust_node_area.adjust_node_area as adjust_node_area
 
+from dreamplace.CongestionPredictor import CongestionPredictor
+
 
 class PreconditionOp:
     """Preconditioning engine is critical for convergence.
@@ -269,6 +271,18 @@ class PlaceObj(nn.Module):
             self.routability_Lsub_iteration = self.Lsub_iteration
         self.start_fence_region_density = False
 
+        ################
+        self.our_route_opt = False
+        if "our_route_opt" in params.__dict__:
+            args = params.args
+            op_collections.route_utilization_map_op = self.build_route_utilization_map(params, placedb, self.data_collections)
+            self.our_route_opt = True
+            self.pred_model = CongestionPredictor(args, placedb, op_collections, data_collections, params)
+            self.overflow_threshold = 0.8
+            self.overflow_threshold_theta = 0.05
+            self.overflow = 1e9
+        ################
+
 
     def obj_fn(self, pos):
         """
@@ -297,6 +311,12 @@ class PlaceObj(nn.Module):
         else:
             result = torch.add(self.wirelength, self.density, alpha=(self.density_factor * self.density_weight).item())
 
+        ################
+        if self.our_route_opt and self.overflow < self.overflow_threshold:
+            congestion = self.pred_model.forward(pos)
+            result += congestion
+            self.overflow_threshold -= self.overflow_threshold_theta
+        ################
         return result
 
     def obj_and_grad_fn_old(self, pos_w, pos_g=None, admm_multiplier=None):
