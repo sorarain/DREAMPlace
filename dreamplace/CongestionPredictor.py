@@ -30,9 +30,12 @@ class CongestionPredictor():
     
     def forward(self, pos):
         pos_ = torch.cat([pos[:self.placedb.num_physical_nodes].unsqueeze(1),pos[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes].unsqueeze(1)],dim=1)
-        node_pos = pos_.cpu()
+        node_pos_ = pos_.cpu()
         _, hmapfake, vmapfake = self.op_collections.route_utilization_map_op(pos)
         hmapfake, vmapfake = hmapfake.data.cpu(), vmapfake.data.cpu()
+        # node_pos[:,0] = node_pos_[:,0].clamp(min=self.placedb.routing_grid_xl,max=self.placedb.routing_grid_xh)
+        # node_pos[:,1] = node_pos_[:,1].clamp(min=self.placedb.routing_grid_yl,max=self.placedb.routing_grid_yh)
+        node_pos = torch.cat([node_pos_[:,0].clamp(min=self.placedb.routing_grid_xl,max=self.placedb.routing_grid_xh).squeeze().unsqueeze(1),node_pos_[:,1].clamp(min=self.placedb.routing_grid_yl,max=self.placedb.routing_grid_yh).squeeze().unsqueeze(1)],dim=1)
 
         input_dict = self.constructGraphInput(node_pos, hmapfake, vmapfake)
 

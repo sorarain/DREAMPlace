@@ -1,6 +1,6 @@
 import sys
 import os
-sys.path.append("/root/RouteGraph")
+sys.path.append("./thirdparty/RouteGraph")
 sys.path.append(os.path.join(os.path.abspath("."),"build"))
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_dir not in sys.path:
@@ -69,4 +69,12 @@ for netlist_name in netlist_names:
     placedb(params)
     placer = NonLinearPlace.NonLinearPlace(params, placedb, None)
     metrics = placer(params, placedb)
+
+    path = "%s/%s" % (params.result_dir, params.design_name())
+    if not os.path.exists(path):
+        os.system("mkdir -p %s" % (path))
+    gp_out_file = os.path.join(
+        path,
+        "%s.gp.%s" % (params.design_name(), params.solution_file_suffix()))
+    placedb.write(params, gp_out_file)
 
