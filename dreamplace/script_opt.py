@@ -63,6 +63,7 @@ for netlist_name in netlist_names:
     suffix = ''
     params.__dict__["timing_opt_flag"] = 0
     params.__dict__["our_route_opt"] = 1
+    params.__dict__["congestion_weight"] = args.congestion_weight
     params.__dict__["routability_opt_flag"] = 0
     params.args = args
     placedb = PlaceDB.PlaceDB()

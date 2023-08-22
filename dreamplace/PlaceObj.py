@@ -273,10 +273,11 @@ class PlaceObj(nn.Module):
 
         ################
         self.our_route_opt = False
-        if "our_route_opt" in params.__dict__:
+        if "our_route_opt" in params.__dict__ and params.our_route_opt:
             args = params.args
             op_collections.route_utilization_map_op = self.build_route_utilization_map(params, placedb, self.data_collections)
             self.our_route_opt = True
+            self.our_congestion_weight = params.congestion_weight
             self.pred_model = CongestionPredictor(args, placedb, op_collections, data_collections, params)
             self.overflow_threshold = 0.8
             self.overflow_threshold_theta = 0.05
@@ -314,7 +315,7 @@ class PlaceObj(nn.Module):
         ################
         if self.our_route_opt and self.overflow < self.overflow_threshold:
             congestion = self.pred_model.forward(pos)
-            result += congestion
+            result += self.our_congestion_weight * congestion
             self.overflow_threshold -= self.overflow_threshold_theta
         ################
         return result

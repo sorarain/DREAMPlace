@@ -48,6 +48,7 @@ def get_args():
 
     # argparser.add_argument('--use_optim', type=bool, default=True)
     argparser.add_argument('--congestion_epoch', type=int, default=500)
+    argparser.add_argument('--congestion_weight', type=float, default=1e0)
     # argparser.add_argument('--no_optim', type=bool, default=False)
     argparser.add_argument('--optim', type=str, default='')
 
