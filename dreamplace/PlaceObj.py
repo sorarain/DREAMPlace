@@ -313,9 +313,13 @@ class PlaceObj(nn.Module):
             result = torch.add(self.wirelength, self.density, alpha=(self.density_factor * self.density_weight).item())
 
         ################
-        if self.our_route_opt and self.overflow < self.overflow_threshold:
-            congestion = self.pred_model.forward(pos)
-            result += self.our_congestion_weight * congestion
+        if self.our_route_opt: #and self.overflow < self.overflow_threshold
+            congestion_grad,congestion = self.pred_model.forward(pos)
+            congestion_grad *= self.our_congestion_weight
+            congestion *= self.our_congestion_weight
+            result = (result, congestion, congestion_grad)
+            # print(congestion_grad)
+            # result += self.our_congestion_weight * congestion
             self.overflow_threshold -= self.overflow_threshold_theta
         ################
         return result
@@ -403,8 +407,15 @@ class PlaceObj(nn.Module):
         if pos.grad is not None:
             pos.grad.zero_()
         obj = self.obj_fn(pos)
-
-        obj.backward()
+        if type(obj) == tuple:
+            loss, congestion, congestion_grad = obj
+            loss.backward()
+            obj = loss + congestion
+            pos.grad[:self.placedb.num_physical_nodes] += congestion_grad[:,0]
+            pos.grad[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes] += congestion_grad[:,1]
+            print(obj,congestion)
+        else:
+            obj.backward()
 
         self.op_collections.precondition_op(pos.grad, self.density_weight, self.update_mask)
 
