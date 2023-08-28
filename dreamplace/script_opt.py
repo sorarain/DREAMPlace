@@ -39,7 +39,7 @@ netlist_names = [
     # 'superblue5',
     # 'superblue6',
     # 'superblue7',
-    # 'superblue9',
+    # 'superblue9',# wrong kreorder
     # 'superblue10',#fail
     # 'superblue11',
     # 'superblue12',
@@ -70,6 +70,7 @@ for netlist_name in netlist_names:
     placedb(params)
     placer = NonLinearPlace.NonLinearPlace(params, placedb, None)
     metrics = placer(params, placedb)
+    l_metric = len(metrics)
 
     path = "%s/%s" % (params.result_dir, params.design_name())
     if not os.path.exists(path):
@@ -78,4 +79,38 @@ for netlist_name in netlist_names:
         path,
         "%s.gp.%s" % (params.design_name(), params.solution_file_suffix()))
     placedb.write(params, gp_out_file)
+    with open(f"{path}/train.json","w") as f:
+        iteration_list = []
+        objective_list = []
+        overflow_list = []
+        wirelength_list = []
+        density_list = []
+        density_weight_list = []
+        max_density_list = []
+        gamma_list = []
+        for metric in metrics:
+            v = metric
+            while type(v) == list:
+                v = v[0]
+            if v.iteration is not None:
+                iteration_list.append(int(v.iteration))
+            if v.overflow is not None:
+                overflow_list.append(float(v.overflow))
+            if v.hpwl is not None:
+                wirelength_list.append(float(v.hpwl))
+            if v.density_weight is not None:
+                density_weight_list.append(float(v.density_weight))
+            if v.max_density is not None:
+                max_density_list.append(float(v.max_density))
+            if v.gamma is not None:
+                gamma_list.append(float(v.gamma))
+        result_list = {
+            "iteration":iteration_list,
+            "overflow":overflow_list,
+            "wirelength":wirelength_list,
+            "density_weight":density_weight_list,
+            "max_density":max_density_list,
+            "gamma":gamma_list,
+        }
+        json.dump(result_list,f)
 

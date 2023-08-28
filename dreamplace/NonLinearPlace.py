@@ -52,6 +52,7 @@ class NonLinearPlace(BasicPlace.BasicPlace):
         """
         iteration = 0
         all_metrics = []
+        pre_pos = None
         timing_op = self.op_collections.timing_op
         if params.timing_opt_flag:
             time_unit = timing_op.timer.time_unit()
@@ -496,6 +497,15 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                             one_descent_step(
                                 Lgamma_step, Llambda_density_weight_step, Lsub_step, iteration, Lsub_metrics
                             )
+                            pos = model.data_collections.pos[0]
+                            # if not (pre_pos is None):
+                            #     if model.overflow < 0.8:
+                            #         delta = pos - pre_pos
+                            #         print("---delta----")
+                            #         print(delta[:placedb.num_nodes])
+                            #         print(delta[placedb.num_nodes:])
+                            #         print(torch.mean(torch.abs(delta)))
+                            # pre_pos = pos.data.clone()
 
                             if len(placedb.regions) == 0:
                                 overflow_list.append(Llambda_metrics[-1][-1].overflow.data.item())

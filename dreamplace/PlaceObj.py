@@ -313,12 +313,15 @@ class PlaceObj(nn.Module):
             result = torch.add(self.wirelength, self.density, alpha=(self.density_factor * self.density_weight).item())
 
         ################
-        if self.our_route_opt: #and self.overflow < self.overflow_threshold
+        if self.our_route_opt and self.overflow < 0.8: #and self.overflow < self.overflow_threshold 
             congestion_grad,congestion = self.pred_model.forward(pos)
             congestion_grad *= self.our_congestion_weight
             congestion *= self.our_congestion_weight
             result = (result, congestion, congestion_grad)
+            # print("------------")
+            # print(f"\t\t congestion grad")
             # print(congestion_grad)
+            # print(f"congestion:{congestion}\nHPWL:{self.wirelength}\ndensity:{self.density} lambda:{self.density_factor * self.density_weight}")
             # result += self.our_congestion_weight * congestion
             self.overflow_threshold -= self.overflow_threshold_theta
         ################
@@ -411,13 +414,20 @@ class PlaceObj(nn.Module):
             loss, congestion, congestion_grad = obj
             loss.backward()
             obj = loss + congestion
-            pos.grad[:self.placedb.num_physical_nodes] += congestion_grad[:,0]
-            pos.grad[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes] += congestion_grad[:,1]
+            # print(f"\t\t pos grad")
+            # print(pos.grad[:self.placedb.num_nodes])
+            # print(pos.grad[self.placedb.num_nodes:])
+            pos.grad[:self.placedb.num_movable_nodes] += congestion_grad[:self.placedb.num_movable_nodes,0]
+            pos.grad[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_movable_nodes] += congestion_grad[:self.placedb.num_movable_nodes,1]
             print(obj,congestion)
         else:
             obj.backward()
 
         self.op_collections.precondition_op(pos.grad, self.density_weight, self.update_mask)
+        # if 'loss' in vars():
+        #     print("\t\t precondition_op grad")
+        #     print(pos.grad[:self.placedb.num_nodes])
+        #     print(pos.grad[self.placedb.num_nodes:])
 
         return obj, pos.grad
 
