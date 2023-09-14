@@ -327,6 +327,10 @@ class PlaceObj(nn.Module):
         ################
         return result
 
+    def GetPredCongestionMap(self, pos):
+        congestionmap = self.pred_model.GetPredCongestionMap(pos)
+        return torch.tensor(congestionmap, dtype=pos.dtype,device=pos.device)
+
     def obj_and_grad_fn_old(self, pos_w, pos_g=None, admm_multiplier=None):
         """
         @brief compute objective and gradient.

@@ -139,6 +139,136 @@ int pinDemandMapCudaLauncher(const T *node_x, const T *node_y,
     return 0;
 }
 
+
+template <typename T, typename AtomicOp>
+__global__ void netFeat(const T *pin_pos_x,
+                              const T *pin_pos_y,
+                              const int *netpin_start,
+                              const int *flat_netpin,
+                              T bin_size_x, T bin_size_y,
+                              T xl, T yl, T xh, T yh,
+
+                              int num_bins_x, int num_bins_y,
+                              int num_nets, AtomicOp atomic_add_op,
+                              typename AtomicOp::type *net_feat)
+{
+    const int i = threadIdx.x + blockDim.x * blockIdx.x;
+    if (i < num_nets)
+    {
+        const int start = netpin_start[i];
+        const int end = netpin_start[i + 1];
+
+        T x_max = -cuda::numeric_limits<T>::max();
+        T x_min = cuda::numeric_limits<T>::max();
+        T y_max = -cuda::numeric_limits<T>::max();
+        T y_min = cuda::numeric_limits<T>::max();
+
+        for (int j = start; j < end; ++j)
+        {
+            int pin_id = flat_netpin[j];
+            const T xx = pin_pos_x[pin_id];
+            x_max = DREAMPLACE_STD_NAMESPACE::max(xx, x_max);
+            x_min = DREAMPLACE_STD_NAMESPACE::min(xx, x_min);
+            const T yy = pin_pos_y[pin_id];
+            y_max = DREAMPLACE_STD_NAMESPACE::max(yy, y_max);
+            y_min = DREAMPLACE_STD_NAMESPACE::min(yy, y_min);
+        }
+
+        int max_px = int(x_max / bin_size_x);
+        int max_py = int(y_max / bin_size_y);
+        int min_px = int(x_min / bin_size_x);
+        int min_py = int(y_min / bin_size_y);
+        double span_h = x_max - x_min + 1;
+        double span_v = y_max - y_min + 1;
+        int span_ph = max_px - min_px + 1;
+        int span_pv = max_py - min_py + 1;
+        net_feat[i * 7] = span_h;
+        net_feat[i * 7 + 1] = span_v;
+        net_feat[i * 7 + 2] = span_h * span_v;
+        net_feat[i * 7 + 3] = span_ph;
+        net_feat[i * 7 + 4] = span_pv;
+        net_feat[i * 7 + 5] = span_ph * span_pv;
+        net_feat[i * 7 + 6] = netpin_start[i + 1] - netpin_start[i];
+        // compute the bin box that this net will affect
+        // int bin_index_xl = int((x_min - xl) / bin_size_x);
+        // int bin_index_xh = int((x_max - xl) / bin_size_x) + 1;
+        // bin_index_xl = DREAMPLACE_STD_NAMESPACE::max(bin_index_xl, 0);
+        // bin_index_xh = DREAMPLACE_STD_NAMESPACE::min(bin_index_xh, num_bins_x);
+
+        // int bin_index_yl = int((y_min - yl) / bin_size_y);
+        // int bin_index_yh = int((y_max - yl) / bin_size_y) + 1;
+        // bin_index_yl = DREAMPLACE_STD_NAMESPACE::max(bin_index_yl, 0);
+        // bin_index_yh = DREAMPLACE_STD_NAMESPACE::min(bin_index_yh, num_bins_y);
+
+        // T wt = netWiringDistributionMapWeight<T>(end - start);
+        // if (net_weights)
+        // {
+        //     wt *= net_weights[i];
+        // }
+
+        // for (int j = start; j < end; ++j) {
+        //     int pin_id = flat_netpin[j];
+        //     const T xx = pin_pos_x[pin_id];
+        //     const T yy = pin_pos_y[pin_id];
+
+        //     int bin_index_x = int((xx - xl) / bin_size_x);
+        //     int bin_index_y = int((yy - yl) / bin_size_y);
+
+            
+        //     int index = bin_index_x * num_bins_y + bin_index_y;
+
+        //     atomic_add_op(&horizontal_utilization_map[index], wt / (bin_index_xh - bin_index_xl + cuda::numeric_limits<T>::epsilon()));
+        //     atomic_add_op(&vertical_utilization_map[index], wt / (bin_index_yh - bin_index_yl + cuda::numeric_limits<T>::epsilon()));
+        // }
+    }
+}
+
+// fill the demand map net by net
+template <typename T>
+int netFeatCudaLauncher(const T *pin_pos_x,
+                              const T *pin_pos_y,
+                              const int *netpin_start,
+                              const int *flat_netpin,
+                              T bin_size_x, T bin_size_y,
+                              T xl, T yl, T xh, T yh,
+
+                              int num_bins_x, int num_bins_y,
+                              int num_nets, 
+                              T *net_feat)
+{
+    AtomicAddCUDA<T> atomic_add_op;
+    int thread_count = 512;
+    int block_count = ceilDiv(num_nets, thread_count);
+    netFeat<<<block_count, thread_count>>>(
+            pin_pos_x,
+            pin_pos_y,
+            netpin_start,
+            flat_netpin,
+            bin_size_x, bin_size_y,
+            xl, yl, xh, yh,
+            num_bins_x, num_bins_y,
+            num_nets,
+            atomic_add_op, 
+            net_feat
+            );
+  return 0;
+}
+
+#define REGISTER_NET_FEAT_KERNEL_LAUNCHER(T)                                           \
+    template int netFeatCudaLauncher<T>(const T *pin_pos_x,             \
+                                              const T *pin_pos_y,             \
+                                              const int *netpin_start,        \
+                                              const int *flat_netpin,         \
+                                              T bin_size_x, T bin_size_y,     \
+                                              T xl, T yl, T xh, T yh,         \
+                                                                              \
+                                              int num_bins_x, int num_bins_y, \
+                                              int num_nets,                   \
+                                              T *net_feat);  \
+
+REGISTER_NET_FEAT_KERNEL_LAUNCHER(float);
+REGISTER_NET_FEAT_KERNEL_LAUNCHER(double);
+
 #define REGISTER_KERNEL_LAUNCHER(T)                                                                       \
     template int pinDemandMapCudaLauncher<T>(const T *node_x, const T *node_y, \
             const T *node_size_x, const T *node_size_y, \

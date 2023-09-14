@@ -80,9 +80,54 @@ at::Tensor pin_utilization_map_forward(
   return pin_utilization_map;
 }
 
+// fill the demand map net by net
+template <typename T>
+int netFeatCudaLauncher(const T *pin_pos_x, const T *pin_pos_y,
+                     const int *netpin_start, const int *flat_netpin,
+                     T bin_size_x, T bin_size_y, T xl,
+                     T yl, T xh, T yh,
+
+                     int num_bins_x, int num_bins_y, int num_nets,
+                     T *net_feat);
+
+void net_feat_forward(at::Tensor pin_pos, at::Tensor netpin_start,
+                  at::Tensor flat_netpin, 
+                  double bin_size_x, double bin_size_y, double xl, double yl,
+                  double xh, double yh, int num_bins_x, int num_bins_y,
+                  at::Tensor net_feat) {
+  CHECK_FLAT_CUDA(pin_pos);
+  CHECK_EVEN(pin_pos);
+  CHECK_CONTIGUOUS(pin_pos);
+
+  CHECK_FLAT_CUDA(netpin_start);
+  CHECK_CONTIGUOUS(netpin_start);
+
+  CHECK_FLAT_CUDA(flat_netpin);
+  CHECK_CONTIGUOUS(flat_netpin);
+
+
+  int num_nets = netpin_start.numel() - 1;
+  int num_pins = pin_pos.numel() / 2;
+
+  // Call the cuda kernel launcher
+  DREAMPLACE_DISPATCH_FLOATING_TYPES(pin_pos, "netFeatCudaLauncher", [&] {
+    netFeatCudaLauncher<scalar_t>(
+        DREAMPLACE_TENSOR_DATA_PTR(pin_pos, scalar_t),
+        DREAMPLACE_TENSOR_DATA_PTR(pin_pos, scalar_t) + num_pins,
+        DREAMPLACE_TENSOR_DATA_PTR(netpin_start, int),
+        DREAMPLACE_TENSOR_DATA_PTR(flat_netpin, int),
+        bin_size_x, bin_size_y, xl, yl, xh, yh,
+
+        num_bins_x, num_bins_y, num_nets,
+        DREAMPLACE_TENSOR_DATA_PTR(net_feat, scalar_t));
+  });
+}
+
 DREAMPLACE_END_NAMESPACE
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("forward", &DREAMPLACE_NAMESPACE::pin_utilization_map_forward,
         "compute pin utilization map (CUDA)");
+  m.def("feat_forward", &DREAMPLACE_NAMESPACE::net_feat_forward,
+        "compute net feat (CUDA)");
 }

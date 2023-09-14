@@ -71,3 +71,43 @@ class PinUtilization(nn.Module):
         output.mul_(1 / (bin_size_x * bin_size_y * self.unit_pin_capacity))
 
         return output
+
+class NetUtilization(nn.Module):
+    def __init__(self, 
+                netpin_start,
+                flat_netpin,
+                xl,
+                xh,
+                yl,
+                yh,
+                num_bins_x,
+                num_bins_y,
+                num_nets):
+        super(NetUtilization, self).__init__()
+        self.netpin_start = netpin_start
+        self.flat_netpin = flat_netpin
+        self.xl = xl
+        self.yl = yl
+        self.xh = xh
+        self.yh = yh
+        self.num_bins_x = num_bins_x
+        self.num_bins_y = num_bins_y
+        self.bin_size_x = (xh - xl) / num_bins_x
+        self.bin_size_y = (yh - yl) / num_bins_y
+        self.num_nets = num_nets
+
+    def forward(self, pin_pos):
+        net_feat = torch.zeros(
+            (self.num_nets, 7),
+            dtype = pin_pos.dtype,
+            device = pin_pos.device,
+        ).flatten()
+        if pin_pos.is_cuda:
+            func = pin_utilization_cuda.feat_forward 
+        else:
+            func = pin_utilization_cpp.feat_forward
+        func(pin_pos, self.netpin_start, self.flat_netpin,
+             self.bin_size_x, self.bin_size_y, self.xl, self.yl, self.xh,
+             self.yh, self.num_bins_x, self.num_bins_y, 
+             net_feat)
+        return net_feat.view([-1,7])

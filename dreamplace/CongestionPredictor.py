@@ -14,14 +14,10 @@ from torch.nn import functional as F
 from thirdparty.RouteGraph.model.RouteGNN import NetlistGNN
 from thirdparty.RouteGraph.data.load_data_optimize import torch_feature_grid2node_weighted,node_pairs_among,build_grid_graph
 from dreamplace.cython.net_span import get_net_span
+import dreamplace.ops.pin_utilization.pin_utilization as pin_utilization
 
 class CongestionPredictor():
     def __init__(self, args, placedb, op_collections, data_collections, params):
-        self.initRouteGraphModel(args)
-
-        self.initFixPlaceDBParam(placedb, data_collections)
-
-        self.constructNetlistGraph(placedb, params)
 
         self.placedb = placedb
         self.params = params
@@ -29,8 +25,120 @@ class CongestionPredictor():
         self.op_collections = op_collections
         self.data_collections = data_collections
 
+        self.initRouteGraphModel(args)
+
+        self.initFixPlaceDBParam(placedb, data_collections)
+
+        self.constructNetlistGraph(placedb, params)
+
+        self.net_feat_ops = pin_utilization.NetUtilization(
+            netpin_start=data_collections.flat_net2pin_start_map,
+            flat_netpin=data_collections.flat_net2pin_map,
+            xl=placedb.routing_grid_xl,
+            yl=placedb.routing_grid_yl,
+            xh=placedb.routing_grid_xh,
+            yh=placedb.routing_grid_yh,
+            num_bins_x=placedb.num_routing_grids_x,
+            num_bins_y=placedb.num_routing_grids_y,
+            num_nets=placedb.num_nets)
+        ##########
+        # self.pre_pos = torch.zeros([placedb.num_physical_nodes,2])
+        # self.pre_grad = None
+        # self.pre_congestion = torch.zeros([placedb.num_physical_nodes])
+        ##########
+
+
     
     def forward(self, pos):
+        pos_ = torch.cat([pos[:self.placedb.num_physical_nodes].unsqueeze(1),pos[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes].unsqueeze(1)],dim=1)
+        node_pos_ = pos_.detach().clone().cpu()
+        # t1 = time.time()
+        _, hmapfake, vmapfake = self.op_collections.route_utilization_map_op(pos)
+        # print(f"rudy time:{time.time() - t1}")
+        hmapfake, vmapfake = hmapfake.data.cpu(), vmapfake.data.cpu()
+        # node_pos[:,0] = node_pos_[:,0].clamp(min=self.placedb.routing_grid_xl,max=self.placedb.routing_grid_xh)
+        # node_pos[:,1] = node_pos_[:,1].clamp(min=self.placedb.routing_grid_yl,max=self.placedb.routing_grid_yh)
+        node_pos = torch.cat([node_pos_[:,0].clamp(min=self.placedb.routing_grid_xl,max=self.placedb.routing_grid_xh).squeeze().unsqueeze(1),node_pos_[:,1].clamp(min=self.placedb.routing_grid_yl,max=self.placedb.routing_grid_yh).squeeze().unsqueeze(1)],dim=1)
+
+        # t1 = time.time()
+        input_dict = self.constructGraphInput(node_pos, hmapfake, vmapfake)
+        # print(f"construct input time:{time.time() - t1}")
+
+        # t1 = time.time()
+        list_route_graph = self.constructRouteGraph(input_dict, hmapfake, vmapfake)
+        # print(f"construct route graph:{time.time() - t1}")
+
+        # t1 = time.time()
+        pos_grad,list_cell_congestion,_ = self.subgraphForward(list_route_graph, pos_, hmapfake, vmapfake)
+        # print(f"subgraph forward graph:{time.time() - t1}")
+
+        return pos_grad,list_cell_congestion.sum()
+    
+    def modelForward(self, sub_route_graph):
+        in_node_feat = sub_route_graph.nodes['cell'].data['hv']
+        in_net_feat = sub_route_graph.nodes['net'].data['hv']
+        in_pin_feat = sub_route_graph.edges['pinned'].data['feats']
+        in_hanna_feat = sub_route_graph.nodes['gcell'].data['hv']
+        pred_cell, _ = self.model.forward(in_node_feat=in_node_feat,in_net_feat=in_net_feat,
+                                in_pin_feat=in_pin_feat,in_hanna_feat=in_hanna_feat,node_net_graph=sub_route_graph)
+        return pred_cell
+    
+    def subgraphForward(self, list_route_graph, node_pos, h_net_density_grid, v_net_density_grid):
+        list_cell_congestion = torch.zeros([0], dtype=torch.float32, device=self.device)
+        list_cell_pos = torch.zeros([0,2], dtype=torch.float32, device=self.device)
+        pos_grad = torch.zeros_like(node_pos,device=self.device)
+        for sub_hetero_graph,sub_route_graph in zip(self.list_hetero_graph,list_route_graph):
+            ##########
+            # if self.pre_pos is not None and self.pre_grad is not None:
+            #     pre_pos = self.pre_pos[p:p+sub_hetero_graph.nodes['cell'].data['pos'].size(0),:]
+            #     delta = torch.abs(pre_pos - sub_hetero_graph.nodes['cell'].data['pos'].to(self.device))
+            #     # print(torch.mean(delta,dim=0), torch.max(delta, dim=0),self.bin_x,self.bin_y)
+            #     max_delta = torch.max(delta,dim=0).values
+            #     if float(max_delta[0].item()) < self.bin_x / 2 and float(max_delta[1].item()) < self.bin_y / 2:
+            #         pos_grad[sub_hetero_graph.nodes['cell'].data[dgl.NID].to(self.device)] += self.pre_grad[sub_hetero_graph.nodes['cell'].data[dgl.NID].to(self.device)]
+            #         list_cell_congestion = torch.hstack([list_cell_congestion,self.pre_congestion[p:p+sub_hetero_graph.nodes['cell'].data['pos'].size(0)].to(self.device)])
+            #         list_cell_pos = torch.vstack([list_cell_pos, self.pre_pos[p:p+sub_hetero_graph.nodes['cell'].data['pos'].size(0)].to(self.device)])
+            #         continue
+            # p+=sub_hetero_graph.nodes['cell'].data['pos'].size(0)
+            ##########
+            sub_route_graph = sub_route_graph.to(self.device)
+            congestion = self.modelForward(sub_route_graph)
+            congestion.sum().backward()
+            grad = self.get_grad(sub_hetero_graph.nodes['cell'].data['pos'], h_net_density_grid, v_net_density_grid, sub_route_graph.nodes['cell'].data['hv'].grad[:,3:-1])
+            pos_grad[sub_hetero_graph.nodes['cell'].data[dgl.NID].to(self.device)] += grad
+            list_cell_congestion = torch.hstack([list_cell_congestion,congestion.data.squeeze()])
+            list_cell_pos = torch.vstack([list_cell_pos, sub_hetero_graph.nodes['cell'].data['pos'].to(self.device)])
+        print("\t\t------------------")
+        print(f"\t\t mean congestion {list_cell_congestion.mean()}")
+        print(f"\t\t max congestion {list_cell_congestion.max()}")
+        print(f"\t\t sum congestion {list_cell_congestion.sum()}")
+        print("\t\t------------------")
+        ##########
+        # self.pre_pos = node_pos.clone().detach().to(self.device)
+        # self.pre_grad = pos_grad
+        # self.pre_congestion = list_cell_congestion
+        ##########
+        return pos_grad,list_cell_congestion, list_cell_pos
+
+    def constructCongestionMap(self, list_cell_congestion, list_cell_pos):
+        cmap_pred = np.zeros((self.num_bin_x, self.num_bin_y))
+        list_cell_congestion = list_cell_congestion.clamp(max=3).exp() - 1
+        wmap = 1e-6 * np.ones_like(cmap_pred)
+        indices = []
+        for i in range(list_cell_pos.size(0)):
+            posx, posy = list_cell_pos[i, 0], list_cell_pos[i, 1]
+            key1, key2 = int(np.rint(posx / self.bin_x)), int(np.rint(posy / self.bin_y))
+            # if key1 == 0 and key2 == 0:
+            #     continue
+            if float(list_cell_congestion[i] < 0.8):
+                continue
+            wmap[key1, key2] += 1
+            cmap_pred[key1, key2] += list_cell_congestion[i]
+            indices += [key2 + key1 * self.num_bin_y]
+        cmap_pred_norm = np.divide(cmap_pred, wmap)
+        return cmap_pred_norm
+
+    def GetPredCongestionMap(self, pos):
         pos_ = torch.cat([pos[:self.placedb.num_physical_nodes].unsqueeze(1),pos[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes].unsqueeze(1)],dim=1)
         node_pos_ = pos_.detach().clone().cpu()
         _, hmapfake, vmapfake = self.op_collections.route_utilization_map_op(pos)
@@ -44,35 +152,11 @@ class CongestionPredictor():
         
         list_route_graph = self.constructRouteGraph(input_dict, hmapfake, vmapfake)
 
-        congestion_grad = self.subgraphForward(list_route_graph, pos_, hmapfake, vmapfake)
+        _,list_cell_congestion,list_cell_pos = self.subgraphForward(list_route_graph, pos_, hmapfake, vmapfake)
 
-        return congestion_grad
-    
-    def modelForward(self, sub_route_graph):
-        in_node_feat = sub_route_graph.nodes['cell'].data['hv']
-        in_net_feat = sub_route_graph.nodes['net'].data['hv']
-        in_pin_feat = sub_route_graph.edges['pinned'].data['feats']
-        in_hanna_feat = sub_route_graph.nodes['gcell'].data['hv']
-        pred_cell, _ = self.model.forward(in_node_feat=in_node_feat,in_net_feat=in_net_feat,
-                                in_pin_feat=in_pin_feat,in_hanna_feat=in_hanna_feat,node_net_graph=sub_route_graph)
-        return pred_cell
-    
-    def subgraphForward(self, list_route_graph, node_pos, h_net_density_grid, v_net_density_grid):
-        list_cell_congestion = torch.zeros([0], dtype=torch.float32, device=self.device)
-        pos_grad = torch.zeros_like(node_pos,device=self.device)
-        for sub_hetero_graph,sub_route_graph in zip(self.list_hetero_graph,list_route_graph):
-            sub_route_graph = sub_route_graph.to(self.device)
-            congestion = self.modelForward(sub_route_graph)
-            congestion.sum().backward()
-            grad = self.get_grad(sub_hetero_graph.nodes['cell'].data['pos'], h_net_density_grid, v_net_density_grid, sub_route_graph.nodes['cell'].data['hv'].grad[:,3:-1])
-            pos_grad[sub_hetero_graph.nodes['cell'].data[dgl.NID].to(self.device)] += grad
-            list_cell_congestion = torch.hstack([list_cell_congestion,congestion.data.squeeze()])
-        print("\t\t------------------")
-        print(f"\t\t mean congestion {list_cell_congestion.mean()}")
-        print(f"\t\t max congestion {list_cell_congestion.max()}")
-        print(f"\t\t sum congestion {list_cell_congestion.sum()}")
-        print("\t\t------------------")
-        return pos_grad,list_cell_congestion.sum()
+        congestionmap = self.constructCongestionMap(list_cell_congestion.cpu(), list_cell_pos.cpu())
+
+        return congestionmap
 
         
     def constructGraphInput(self, pos, h_net_density_grid, v_net_density_grid):
@@ -82,8 +166,8 @@ class CongestionPredictor():
         input_dict['hv'] = torch.cat(
                         [
                             torch.tensor(
-                                np.stack([self.cell_size_x,
-                                        self.cell_size_y,
+                                np.stack([self.cell_size_x.cpu(),
+                                        self.cell_size_y.cpu(),
                                         self.node_pin_num], axis=-1),
                                         dtype=torch.float32
                                         ),
@@ -126,15 +210,20 @@ class CongestionPredictor():
         #     span_pv = max_py - min_py + 1
         #     net_span_feat.append([span_h ,span_v, span_h * span_v, 
         #                         span_ph, span_pv, span_ph * span_pv, len(list_pin)])
-        net_span_feat = get_net_span(
-            self.num_nodes,self.num_nets,
-            np.array(self.placedb.flat_net2pin_map,dtype=np.int32),np.array(self.placedb.flat_net2pin_start_map,dtype=np.int32),
-            np.array(self.placedb.pin2node_map,dtype=np.int32),
-            np.array(self.placedb.pin_offset_x,dtype=np.int32),np.array(self.placedb.pin_offset_y,dtype=np.int32),
-            np.array(pos,dtype=np.float64),
-            np.zeros((len(self.placedb.net2pin_map),7),dtype=np.float64),
-            self.bin_x,self.bin_y,
-        )
+        # net_span_feat = get_net_span(
+        #     self.num_nodes,self.num_nets,
+        #     np.array(self.placedb.flat_net2pin_map,dtype=np.int32),np.array(self.placedb.flat_net2pin_start_map,dtype=np.int32),
+        #     np.array(self.placedb.pin2node_map,dtype=np.int32),
+        #     np.array(self.data_collections.pin_offset_x.cpu(),dtype=np.int32),np.array(self.data_collections.pin_offset_y.cpu(),dtype=np.int32),
+        #     np.array(pos,dtype=np.float64),
+        #     np.zeros((len(self.placedb.net2pin_map),7),dtype=np.float64),
+        #     self.bin_x,self.bin_y,
+        # )
+        pos_ = self.data_collections.pos[0].clone().detach()
+        pos_[:self.placedb.num_physical_nodes] = pos[:, 0].to(self.data_collections.pos[0].device)
+        pos_[self.placedb.num_nodes:self.placedb.num_nodes + self.placedb.num_physical_nodes] = pos[:, 1].to(self.data_collections.pos[0].device)
+        pin_pos = self.op_collections.pin_pos_op(pos_)
+        net_span_feat = self.net_feat_ops(pin_pos).cpu()
         input_dict['net_hv'] = torch.tensor(net_span_feat, dtype=torch.float32)
         # input_dict['net_hv'] = torch.zeros([self.num_nets, 7],dtype=torch.float32)
         return input_dict
@@ -231,8 +320,8 @@ class CongestionPredictor():
     
     def constructNetlistGraph(self, placedb, params):
         us,vs = placedb.pin2node_map,placedb.pin2net_map
-        cell_size_x = placedb.node_size_x
-        cell_size_y = placedb.node_size_y
+        cell_size_x = self.data_collections.node_size_x
+        cell_size_y = self.data_collections.node_size_y
         node_pin_num = np.zeros(self.num_nodes,dtype=np.float32)
         net_degree = np.zeros(self.num_nets,dtype=np.float32)
         pin_feats = []
@@ -246,7 +335,7 @@ class CongestionPredictor():
                     pin_IO = 0
                 else:
                     pin_IO = 1
-                pin_feats.append([placedb.pin_offset_x[pin],placedb.pin_offset_y[pin],pin_IO])
+                pin_feats.append([self.data_collections.pin_offset_x[pin],self.data_collections.pin_offset_y[pin],pin_IO])
 
         us_homo,vs_homo = [],[]
         for net,list_pin in tqdm.tqdm(enumerate(placedb.net2pin_map),total=len(placedb.net2pin_map)):

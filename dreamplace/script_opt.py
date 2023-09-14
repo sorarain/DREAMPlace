@@ -36,17 +36,17 @@ netlist_names = [
     # 'superblue2',
     # 'superblue3',
     # 'superblue4',
-    # 'superblue5',
-    # 'superblue6',
-    # 'superblue7',
+    'superblue5',
+    'superblue6',
+    'superblue7',
     # 'superblue9',# wrong kreorder
     # 'superblue10',#fail
-    # 'superblue11',
-    # 'superblue12',
-    # 'superblue14',
-    # 'superblue15',
-    # 'superblue16',
-    # 'superblue18',
+    'superblue11',
+    'superblue12',
+    'superblue14',
+    # # 'superblue15',#can't read
+    'superblue16',
+    'superblue18',
     'superblue19',
 ]
 
@@ -64,7 +64,8 @@ for netlist_name in netlist_names:
     params.__dict__["timing_opt_flag"] = 0
     params.__dict__["our_route_opt"] = 1
     params.__dict__["congestion_weight"] = args.congestion_weight
-    params.__dict__["routability_opt_flag"] = 0
+    params.__dict__["routability_opt_flag"] = 1
+    params.__dict__['max_num_area_adjust'] = 4
     params.args = args
     placedb = PlaceDB.PlaceDB()
     placedb(params)
@@ -72,7 +73,7 @@ for netlist_name in netlist_names:
     metrics = placer(params, placedb)
     l_metric = len(metrics)
 
-    path = "%s/%s" % (params.result_dir, params.design_name())
+    path = "%s/%s/%s" % (params.result_dir, args.name, params.design_name())
     if not os.path.exists(path):
         os.system("mkdir -p %s" % (path))
     gp_out_file = os.path.join(

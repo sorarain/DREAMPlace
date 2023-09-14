@@ -586,7 +586,10 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                             pin_utilization_map = None
                             if adjust_route_area_flag:
                                 if params.adjust_nctugr_area_flag:
-                                    route_utilization_map = model.op_collections.nctugr_congestion_map_op(pos)
+                                    if "our_route_opt" in params.__dict__:
+                                        route_utilization_map = model.GetPredCongestionMap(pos)
+                                    else:
+                                        route_utilization_map = model.op_collections.nctugr_congestion_map_op(pos)
                                 else:
                                     route_utilization_map,_,_ = model.op_collections.route_utilization_map_op(pos)
                                 if params.plot_flag:
@@ -612,6 +615,10 @@ class NonLinearPlace(BasicPlace.BasicPlace):
                             ) = model.op_collections.adjust_node_area_op(
                                 pos, route_utilization_map, pin_utilization_map
                             )
+                            ##########
+                            model.pred_model.data_collections = self.data_collections
+                            model.pred_model.constructNetlistGraph(placedb, params)
+                            ##########
                             content += " -> (%d, %d, %d)" % (
                                 adjust_area_flag,
                                 adjust_route_area_flag,
